@@ -11,29 +11,30 @@ const userRoutes = require('./src/routes/users');
 
 const app = express();
 
+// ---------- Middleware ----------
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+
+// CORS – allow your frontend origin
 app.use(cors({
-    origin: process.env.NODE_ENV === 'production'
-        ? 'https://yourdomain.com'
-        : 'http://localhost:3000',
+    origin: process.env.CLIENT_URL || 'http://localhost:3000',
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
+// ---------- Database ----------
 console.log('🔄 Connecting to database...');
 connectDB()
-    .then(() => {
-        console.log('✅ Database ready with collections and indexes');
-    })
+    .then(() => console.log('✅ Database ready with collections and indexes'))
     .catch((error) => {
         console.error('❌ Database connection failed:', error);
-        process.exit(1);
+        // In Vercel, we don't exit the process; we let the function fail gracefully
+        if (process.env.NODE_ENV !== 'production') process.exit(1);
     });
 
-// Routes
+// ---------- Routes ----------
 app.use('/api/auth', authRoutes);
 app.use('/api/jobs', jobsRoutes);
 app.use('/api/users', userRoutes);
@@ -65,6 +66,7 @@ app.get('/api/health', async (req, res) => {
     }
 });
 
+// 404 handler
 app.use((req, res) => {
     res.status(404).json({
         success: false,
@@ -72,6 +74,7 @@ app.use((req, res) => {
     });
 });
 
+// Global error handler
 app.use((err, req, res, next) => {
     console.error('❌ Server Error:', err);
     res.status(err.status || 500).json({
@@ -80,34 +83,39 @@ app.use((err, req, res, next) => {
     });
 });
 
-const PORT = process.env.PORT || 5000;
-const server = app.listen(PORT, () => {
-    console.log('========================================');
-    console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`📁 Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`🗄️  Database: ${process.env.DB_NAME}`);
-    console.log('========================================');
-    console.log('📋 Available Endpoints:');
-    console.log(`   /api/auth - Authentication routes`);
-    console.log(`   /api/jobs - Job management routes`);
-    console.log(`   /api/users - User management routes`);
-    console.log('========================================');
-});
+// ---------- Export for Vercel (serverless) ----------
+module.exports = app;
 
-const shutdown = async () => {
-    console.log('\n🔄 Shutting down gracefully...');
-    await closeDB();
-    server.close(() => {
-        console.log('✅ Server closed');
-        process.exit(0);
+// ---------- Local development server ----------
+if (require.main === module) {
+    const PORT = process.env.PORT || 5000;
+    const server = app.listen(PORT, () => {
+        console.log('========================================');
+        console.log(`🚀 Server running on port ${PORT}`);
+        console.log(`📁 Environment: ${process.env.NODE_ENV || 'development'}`);
+        console.log(`🗄️  Database: ${process.env.DB_NAME}`);
+        console.log('========================================');
+        console.log('📋 Available Endpoints:');
+        console.log(`   /api/auth - Authentication routes`);
+        console.log(`   /api/jobs - Job management routes`);
+        console.log(`   /api/users - User management routes`);
+        console.log('========================================');
     });
-};
 
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
-process.on('unhandledRejection', (err) => {
-    console.error('Unhandled Rejection:', err);
-    shutdown();
-});
+    // Graceful shutdown (only for local)
+    const shutdown = async () => {
+        console.log('\n🔄 Shutting down gracefully...');
+        await closeDB();
+        server.close(() => {
+            console.log('✅ Server closed');
+            process.exit(0);
+        });
+    };
 
-module.exports = { app, server };
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
+    process.on('unhandledRejection', (err) => {
+        console.error('Unhandled Rejection:', err);
+        shutdown();
+    });
+}

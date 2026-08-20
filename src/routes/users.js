@@ -4,35 +4,37 @@ const router = express.Router();
 const { protect, admin } = require('../middleware/auth');
 const User = require('../models/User');
 
-// Get current user profile
+// GET PROFILE
 router.get('/profile', protect, async (req, res) => {
     try {
         const user = await User.findById(req.user._id);
-
         if (!user) {
             return res.status(404).json({
                 success: false,
                 message: 'User not found'
             });
         }
-
         const { password, ...userWithoutPassword } = user;
-        res.json({
+        return res.json({
             success: true,
             profile: userWithoutPassword
         });
     } catch (error) {
-        console.error('Error fetching profile:', error);
-        res.status(500).json({
+        console.error('❌ Error fetching profile:', error);
+        return res.status(500).json({
             success: false,
             message: 'Failed to fetch profile'
         });
     }
 });
 
-// Update user profile
+// ✅ FIXED: UPDATE PROFILE – robust handling
 router.put('/profile', protect, async (req, res) => {
     try {
+        console.log('📝 Profile update request received');
+        console.log('📝 User ID:', req.user._id);
+        console.log('📝 Request body:', req.body);
+
         const {
             name,
             phone,
@@ -58,166 +60,149 @@ router.put('/profile', protect, async (req, res) => {
             avatar
         } = req.body;
 
-        const updateData = {
-            name: name?.trim(),
-            phone: phone?.trim() || '',
-            location: location?.trim() || '',
-            bio: bio?.trim() || '',
-            website: website?.trim() || '',
-            currentPosition: currentPosition?.trim() || '',
-            company: company?.trim() || '',
-            experience: experience?.trim() || '',
-            education: education?.trim() || '',
-            skills: skills || [],
-            github: github?.trim() || '',
-            linkedin: linkedin?.trim() || '',
-            twitter: twitter?.trim() || '',
-            jobTypes: jobTypes || [],
-            preferredLocations: preferredLocations || [],
-            openToWork: openToWork !== undefined ? openToWork : true,
-            remotePreference: remotePreference || 'hybrid',
-            salaryExpectation: salaryExpectation?.trim() || '',
-            languages: languages || [],
-            certifications: certifications || [],
-            interests: interests || [],
-            avatar: avatar || '',
-            updatedAt: new Date()
-        };
+        // Build update data
+        const updateData = {};
+        if (name !== undefined) updateData.name = name?.trim();
+        if (phone !== undefined) updateData.phone = phone?.trim() || '';
+        if (location !== undefined) updateData.location = location?.trim() || '';
+        if (bio !== undefined) updateData.bio = bio?.trim() || '';
+        if (website !== undefined) updateData.website = website?.trim() || '';
+        if (currentPosition !== undefined) updateData.currentPosition = currentPosition?.trim() || '';
+        if (company !== undefined) updateData.company = company?.trim() || '';
+        if (experience !== undefined) updateData.experience = experience?.trim() || '';
+        if (education !== undefined) updateData.education = education?.trim() || '';
+        if (skills !== undefined) updateData.skills = skills || [];
+        if (github !== undefined) updateData.github = github?.trim() || '';
+        if (linkedin !== undefined) updateData.linkedin = linkedin?.trim() || '';
+        if (twitter !== undefined) updateData.twitter = twitter?.trim() || '';
+        if (jobTypes !== undefined) updateData.jobTypes = jobTypes || [];
+        if (preferredLocations !== undefined) updateData.preferredLocations = preferredLocations || [];
+        if (openToWork !== undefined) updateData.openToWork = openToWork;
+        if (remotePreference !== undefined) updateData.remotePreference = remotePreference || 'hybrid';
+        if (salaryExpectation !== undefined) updateData.salaryExpectation = salaryExpectation?.trim() || '';
+        if (languages !== undefined) updateData.languages = languages || [];
+        if (certifications !== undefined) updateData.certifications = certifications || [];
+        if (interests !== undefined) updateData.interests = interests || [];
+        if (avatar !== undefined) updateData.avatar = avatar || '';
 
-        const updatedUser = await User.updateProfile(req.user._id, updateData);
+        // Ensure at least one field is provided
+        if (Object.keys(updateData).length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'No fields to update'
+            });
+        }
 
-        if (!updatedUser) {
+        // Check if user exists
+        const existingUser = await User.findById(req.user._id);
+        if (!existingUser) {
             return res.status(404).json({
                 success: false,
                 message: 'User not found'
             });
         }
 
-        res.json({
+        // Update profile
+        const updatedUser = await User.updateProfile(req.user._id, updateData);
+        if (!updatedUser) {
+            return res.status(500).json({
+                success: false,
+                message: 'Failed to update profile'
+            });
+        }
+
+        console.log('✅ Profile updated successfully');
+        console.log('✅ Updated user:', updatedUser);
+
+        // ✅ IMPORTANT: Return success: true
+        return res.status(200).json({
             success: true,
             message: 'Profile updated successfully',
             user: updatedUser
         });
+
     } catch (error) {
-        console.error('Error updating profile:', error);
-        res.status(500).json({
+        console.error('❌ Error updating profile:', error);
+        return res.status(500).json({
             success: false,
-            message: 'Failed to update profile'
+            message: error.message || 'Internal server error'
         });
     }
 });
 
-// Get all users (admin only)
+// GET ALL USERS (ADMIN)
 router.get('/', protect, admin, async (req, res) => {
     try {
-        const { limit = 10, skip = 0 } = req.query;
-        const users = await User.findAll({}, {
-            limit: parseInt(limit),
-            skip: parseInt(skip),
-            sort: { createdAt: -1 }
-        });
-        const total = await User.count();
-
+        const { limit = 10, skip = 0, search } = req.query;
+        let filter = {};
+        if (search) {
+            filter = {
+                $or: [
+                    { name: { $regex: search, $options: 'i' } },
+                    { email: { $regex: search, $options: 'i' } }
+                ]
+            };
+        }
+        const users = await User.findAll(filter, { limit: parseInt(limit), skip: parseInt(skip), sort: { createdAt: -1 } });
+        const total = await User.count(filter);
         res.json({
             success: true,
             users,
             pagination: {
                 total,
                 limit: parseInt(limit),
-                skip: parseInt(skip)
+                skip: parseInt(skip),
+                pages: Math.ceil(total / parseInt(limit))
             }
         });
     } catch (error) {
         console.error('Error fetching users:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to fetch users'
-        });
+        res.status(500).json({ success: false, message: 'Failed to fetch users' });
     }
 });
 
-// Get single user (admin only)
+// GET SINGLE USER (ADMIN)
 router.get('/:id', protect, admin, async (req, res) => {
     try {
         const user = await User.findById(req.params.id);
-
-        if (!user) {
-            return res.status(404).json({
-                success: false,
-                message: 'User not found'
-            });
-        }
-
-        res.json({
-            success: true,
-            user
-        });
+        if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+        res.json({ success: true, user });
     } catch (error) {
         console.error('Error fetching user:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to fetch user'
-        });
+        res.status(500).json({ success: false, message: 'Failed to fetch user' });
     }
 });
 
-// Update user role (admin only)
+// UPDATE USER ROLE (ADMIN)
 router.patch('/:id/role', protect, admin, async (req, res) => {
     try {
         const { role } = req.body;
-
         if (!['jobSeeker', 'admin'].includes(role)) {
-            return res.status(400).json({
-                success: false,
-                message: 'Invalid role. Must be jobSeeker or admin'
-            });
+            return res.status(400).json({ success: false, message: 'Invalid role' });
         }
-
+        const existingUser = await User.findById(req.params.id);
+        if (!existingUser) return res.status(404).json({ success: false, message: 'User not found' });
         const updatedUser = await User.updateProfile(req.params.id, { role });
-
-        if (!updatedUser) {
-            return res.status(404).json({
-                success: false,
-                message: 'User not found'
-            });
-        }
-
-        res.json({
-            success: true,
-            message: 'User role updated successfully',
-            user: updatedUser
-        });
+        if (!updatedUser) return res.status(500).json({ success: false, message: 'Failed to update role' });
+        res.json({ success: true, message: 'User role updated successfully', user: updatedUser });
     } catch (error) {
         console.error('Error updating user role:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to update user role'
-        });
+        res.status(500).json({ success: false, message: 'Failed to update user role' });
     }
 });
 
-// Delete user (admin only)
+// DELETE USER (ADMIN)
 router.delete('/:id', protect, admin, async (req, res) => {
     try {
-        const deleted = await User.delete(req.params.id);
-
-        if (!deleted) {
-            return res.status(404).json({
-                success: false,
-                message: 'User not found'
-            });
+        if (req.params.id === req.user._id.toString()) {
+            return res.status(400).json({ success: false, message: 'You cannot delete your own account' });
         }
-
-        res.json({
-            success: true,
-            message: 'User deleted successfully'
-        });
+        const deleted = await User.delete(req.params.id);
+        if (!deleted) return res.status(404).json({ success: false, message: 'User not found' });
+        res.json({ success: true, message: 'User deleted successfully' });
     } catch (error) {
         console.error('Error deleting user:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to delete user'
-        });
+        res.status(500).json({ success: false, message: 'Failed to delete user' });
     }
 });
 

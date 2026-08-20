@@ -4,6 +4,7 @@ const User = require('../models/User');
 
 const protect = async (req, res, next) => {
     try {
+        // Get token from cookie
         const token = req.cookies.token;
 
         if (!token) {
@@ -13,18 +14,34 @@ const protect = async (req, res, next) => {
             });
         }
 
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        const user = await User.findById(decoded.id);
+        try {
+            // Verify token
+            const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-        if (!user) {
+            // Get user from token
+            const user = await User.findById(decoded.id);
+
+            if (!user) {
+                return res.status(401).json({
+                    success: false,
+                    message: 'User not found'
+                });
+            }
+
+            req.user = user;
+            next();
+        } catch (jwtError) {
+            // Clear invalid cookie
+            res.cookie('token', '', {
+                httpOnly: true,
+                expires: new Date(0)
+            });
+
             return res.status(401).json({
                 success: false,
-                message: 'User not found'
+                message: 'Invalid token. Please login again.'
             });
         }
-
-        req.user = user;
-        next();
     } catch (error) {
         console.error('Auth Error:', error);
         return res.status(401).json({

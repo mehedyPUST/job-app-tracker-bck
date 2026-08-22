@@ -6,7 +6,6 @@ require('dotenv').config();
 
 const { connectDB } = require('./src/config/db');
 
-// Routes
 const authRoutes = require('./src/routes/auth');
 const jobsRoutes = require('./src/routes/jobs');
 const userRoutes = require('./src/routes/users');
@@ -18,7 +17,6 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-// CORS – MUST use a real origin when credentials: true
 app.use(cors({
     origin: process.env.CLIENT_URL || 'http://localhost:3000',
     credentials: true,
@@ -26,7 +24,13 @@ app.use(cors({
     allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// ---------- Database (non-blocking for serverless) ----------
+// Log every request (very useful on Vercel)
+app.use((req, res, next) => {
+    console.log(`${req.method} ${req.originalUrl}`);
+    next();
+});
+
+// ---------- Database ----------
 connectDB()
     .then(() => console.log('✅ DB connected'))
     .catch(err => console.error('❌ DB connection failed:', err.message));
@@ -36,7 +40,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/jobs', jobsRoutes);
 app.use('/api/users', userRoutes);
 
-// Debug route
+// Test route
 app.get('/api/auth/test', (req, res) => {
     res.json({ success: true, message: 'Auth router is mounted!' });
 });
@@ -50,9 +54,31 @@ app.get('/api/health', (req, res) => {
     });
 });
 
-// 404
+// Root
+app.get('/', (req, res) => {
+    res.json({
+        success: true,
+        message: 'Job Tracker API is running',
+        endpoints: [
+            'GET  /api/health',
+            'GET  /api/auth/test',
+            'POST /api/auth/login',
+            'POST /api/auth/register',
+            'GET  /api/jobs',
+            'GET  /api/users/profile'
+        ]
+    });
+});
+
+// 404 – now shows the actual path that was requested
 app.use((req, res) => {
-    res.status(404).json({ success: false, message: 'Route not found' });
+    console.log(`❌ 404 - Route not found: ${req.method} ${req.originalUrl}`);
+    res.status(404).json({
+        success: false,
+        message: 'Route not found',
+        path: req.originalUrl,
+        method: req.method
+    });
 });
 
 // Global Error Handler
@@ -64,5 +90,4 @@ app.use((err, req, res, next) => {
     });
 });
 
-// Export for Vercel (do NOT call app.listen)
 module.exports = app;

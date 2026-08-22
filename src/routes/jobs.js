@@ -31,6 +31,164 @@ router.get('/', protect, async (req, res) => {
 });
 
 // ============================================
+// GET STATS  (MUST be before /:id)
+// ============================================
+router.get('/stats/summary', protect, async (req, res) => {
+    try {
+        const db = getDB();
+        const userId = req.user._id.toString();
+
+        const pipeline = [
+            { $match: { userId } },
+            {
+                $group: {
+                    _id: '$status',
+                    count: { $sum: 1 }
+                }
+            }
+        ];
+
+        const stats = await db.collection('jobs').aggregate(pipeline).toArray();
+        const total = stats.reduce((acc, curr) => acc + curr.count, 0);
+
+        const result = {
+            total,
+            statuses: {}
+        };
+
+        stats.forEach(stat => {
+            result.statuses[stat._id] = stat.count;
+        });
+
+        res.json({
+            success: true,
+            stats: result
+        });
+    } catch (error) {
+        console.error('❌ Error fetching stats:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch statistics'
+        });
+    }
+});
+
+// ============================================
+// BULK DELETE (MUST be before /:id)
+// ============================================
+router.delete('/bulk', protect, async (req, res) => {
+    try {
+        const db = getDB();
+        const { jobIds } = req.body;
+
+        if (!jobIds || !Array.isArray(jobIds) || jobIds.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Job IDs array is required'
+            });
+        }
+
+        const objectIds = jobIds
+            .filter(id => ObjectId.isValid(id))
+            .map(id => new ObjectId(id));
+
+        if (objectIds.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid job IDs provided'
+            });
+        }
+
+        const result = await db.collection('jobs').deleteMany({
+            _id: { $in: objectIds },
+            userId: req.user._id.toString()
+        });
+
+        res.json({
+            success: true,
+            message: `${result.deletedCount} jobs deleted successfully`,
+            deletedCount: result.deletedCount
+        });
+    } catch (error) {
+        console.error('❌ Error bulk deleting jobs:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to delete jobs'
+        });
+    }
+});
+
+// ============================================
+// BULK STATUS UPDATE (MUST be before /:id)
+// ============================================
+router.patch('/bulk/status', protect, async (req, res) => {
+    try {
+        const db = getDB();
+        const { jobIds, status } = req.body;
+
+        if (!jobIds || !Array.isArray(jobIds) || jobIds.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Job IDs array is required'
+            });
+        }
+
+        if (!status) {
+            return res.status(400).json({
+                success: false,
+                message: 'Status is required'
+            });
+        }
+
+        const validStatuses = [
+            'applied', 'resume_viewed', 'shortlisted',
+            'online_test', 'interview', 'got_hired',
+            'rejected', 'no_response', 'no_action'
+        ];
+
+        if (!validStatuses.includes(status)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid status value'
+            });
+        }
+
+        const objectIds = jobIds
+            .filter(id => ObjectId.isValid(id))
+            .map(id => new ObjectId(id));
+
+        if (objectIds.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid job IDs provided'
+            });
+        }
+
+        const result = await db.collection('jobs').updateMany(
+            {
+                _id: { $in: objectIds },
+                userId: req.user._id.toString()
+            },
+            {
+                $set: { status, updatedAt: new Date() }
+            }
+        );
+
+        res.json({
+            success: true,
+            message: `${result.modifiedCount} jobs updated successfully`,
+            modifiedCount: result.modifiedCount
+        });
+    } catch (error) {
+        console.error('❌ Error bulk updating status:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to update jobs'
+        });
+    }
+});
+
+// ============================================
 // GET SINGLE JOB
 // ============================================
 router.get('/:id', protect, async (req, res) => {
@@ -193,7 +351,7 @@ router.put('/:id', protect, async (req, res) => {
 });
 
 // ============================================
-// UPDATE STATUS - FIXED AND COMPLETE
+// UPDATE STATUS
 // ============================================
 router.patch('/:id/status', protect, async (req, res) => {
     try {
@@ -202,30 +360,20 @@ router.patch('/:id/status', protect, async (req, res) => {
         const userId = req.user._id.toString();
         const { status } = req.body;
 
-        console.log('📝 Status Update Request:');
-        console.log('📝 Job ID:', jobId);
-        console.log('📝 New Status:', status);
-        console.log('📝 User ID:', userId);
-
-        // 1. Validate ObjectId
         if (!ObjectId.isValid(jobId)) {
-            console.log('❌ Invalid ObjectId:', jobId);
             return res.status(400).json({
                 success: false,
                 message: 'Invalid job ID format'
             });
         }
 
-        // 2. Validate status is provided
         if (!status) {
-            console.log('❌ Status is missing');
             return res.status(400).json({
                 success: false,
                 message: 'Status is required'
             });
         }
 
-        // 3. Validate status is valid
         const validStatuses = [
             'applied', 'resume_viewed', 'shortlisted',
             'online_test', 'interview', 'got_hired',
@@ -233,20 +381,17 @@ router.patch('/:id/status', protect, async (req, res) => {
         ];
 
         if (!validStatuses.includes(status)) {
-            console.log('❌ Invalid status:', status);
             return res.status(400).json({
                 success: false,
                 message: 'Invalid status value'
             });
         }
 
-        // 4. Check if job exists and belongs to user
         const existingJob = await db.collection('jobs').findOne({
             _id: new ObjectId(jobId)
         });
 
         if (!existingJob) {
-            console.log('❌ Job not found:', jobId);
             return res.status(404).json({
                 success: false,
                 message: 'Job not found'
@@ -254,14 +399,12 @@ router.patch('/:id/status', protect, async (req, res) => {
         }
 
         if (existingJob.userId !== userId) {
-            console.log('❌ Job belongs to another user:', existingJob.userId);
             return res.status(403).json({
                 success: false,
                 message: 'You are not authorized to update this job'
             });
         }
 
-        // 5. Update the job
         const result = await db.collection('jobs').findOneAndUpdate(
             {
                 _id: new ObjectId(jobId),
@@ -276,9 +419,6 @@ router.patch('/:id/status', protect, async (req, res) => {
             { returnDocument: 'after' }
         );
 
-        console.log('✅ Status updated successfully');
-
-        // 6. Return success response
         return res.status(200).json({
             success: true,
             message: 'Status updated successfully',
@@ -329,165 +469,6 @@ router.delete('/:id', protect, async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Failed to delete job'
-        });
-    }
-});
-
-// ============================================
-// GET STATS
-// ============================================
-router.get('/stats/summary', protect, async (req, res) => {
-    try {
-        const db = getDB();
-        const userId = req.user._id.toString();
-
-        const pipeline = [
-            { $match: { userId } },
-            {
-                $group: {
-                    _id: '$status',
-                    count: { $sum: 1 }
-                }
-            }
-        ];
-
-        const stats = await db.collection('jobs').aggregate(pipeline).toArray();
-
-        const total = stats.reduce((acc, curr) => acc + curr.count, 0);
-
-        const result = {
-            total,
-            statuses: {}
-        };
-
-        stats.forEach(stat => {
-            result.statuses[stat._id] = stat.count;
-        });
-
-        res.json({
-            success: true,
-            stats: result
-        });
-    } catch (error) {
-        console.error('❌ Error fetching stats:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to fetch statistics'
-        });
-    }
-});
-
-// ============================================
-// BULK OPERATIONS
-// ============================================
-
-// Delete multiple jobs
-router.delete('/bulk', protect, async (req, res) => {
-    try {
-        const db = getDB();
-        const { jobIds } = req.body;
-
-        if (!jobIds || !Array.isArray(jobIds) || jobIds.length === 0) {
-            return res.status(400).json({
-                success: false,
-                message: 'Job IDs array is required'
-            });
-        }
-
-        const objectIds = jobIds
-            .filter(id => ObjectId.isValid(id))
-            .map(id => new ObjectId(id));
-
-        if (objectIds.length === 0) {
-            return res.status(400).json({
-                success: false,
-                message: 'Invalid job IDs provided'
-            });
-        }
-
-        const result = await db.collection('jobs').deleteMany({
-            _id: { $in: objectIds },
-            userId: req.user._id.toString()
-        });
-
-        res.json({
-            success: true,
-            message: `${result.deletedCount} jobs deleted successfully`,
-            deletedCount: result.deletedCount
-        });
-    } catch (error) {
-        console.error('❌ Error bulk deleting jobs:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to delete jobs'
-        });
-    }
-});
-
-// Update status of multiple jobs
-router.patch('/bulk/status', protect, async (req, res) => {
-    try {
-        const db = getDB();
-        const { jobIds, status } = req.body;
-
-        if (!jobIds || !Array.isArray(jobIds) || jobIds.length === 0) {
-            return res.status(400).json({
-                success: false,
-                message: 'Job IDs array is required'
-            });
-        }
-
-        if (!status) {
-            return res.status(400).json({
-                success: false,
-                message: 'Status is required'
-            });
-        }
-
-        const validStatuses = [
-            'applied', 'resume_viewed', 'shortlisted',
-            'online_test', 'interview', 'got_hired',
-            'rejected', 'no_response', 'no_action'
-        ];
-
-        if (!validStatuses.includes(status)) {
-            return res.status(400).json({
-                success: false,
-                message: 'Invalid status value'
-            });
-        }
-
-        const objectIds = jobIds
-            .filter(id => ObjectId.isValid(id))
-            .map(id => new ObjectId(id));
-
-        if (objectIds.length === 0) {
-            return res.status(400).json({
-                success: false,
-                message: 'Invalid job IDs provided'
-            });
-        }
-
-        const result = await db.collection('jobs').updateMany(
-            {
-                _id: { $in: objectIds },
-                userId: req.user._id.toString()
-            },
-            {
-                $set: { status, updatedAt: new Date() }
-            }
-        );
-
-        res.json({
-            success: true,
-            message: `${result.modifiedCount} jobs updated successfully`,
-            modifiedCount: result.modifiedCount
-        });
-    } catch (error) {
-        console.error('❌ Error bulk updating status:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to update jobs'
         });
     }
 });

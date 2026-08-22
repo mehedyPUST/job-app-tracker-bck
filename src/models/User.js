@@ -1,23 +1,23 @@
 // backend/src/models/User.js
-const { getDB } = require('../config/db');
+const { getDBSafe } = require('../config/db');
 const { ObjectId } = require('mongodb');
 const bcrypt = require('bcryptjs');
 
 const COLLECTION_NAME = 'users';
 
 const User = {
-    getCollection: () => {
-        const db = getDB();
+    getCollection: async () => {
+        const db = await getDBSafe();
         return db.collection(COLLECTION_NAME);
     },
 
     findByEmail: async (email) => {
-        const collection = User.getCollection();
+        const collection = await User.getCollection();
         return await collection.findOne({ email: email.toLowerCase() });
     },
 
     findById: async (id) => {
-        const collection = User.getCollection();
+        const collection = await User.getCollection();
         try {
             return await collection.findOne({ _id: new ObjectId(id) });
         } catch (error) {
@@ -26,7 +26,7 @@ const User = {
     },
 
     create: async (userData) => {
-        const collection = User.getCollection();
+        const collection = await User.getCollection();
         const { name, email, password, role } = userData;
 
         const salt = await bcrypt.genSalt(10);
@@ -61,20 +61,20 @@ const User = {
             languages: [],
             certifications: [],
             interests: [],
-            avatar: '' // ✅ IMPORTANT: avatar field included
+            avatar: ''
         };
 
         const result = await collection.insertOne(newUser);
         const { password: _, ...userWithoutPassword } = newUser;
+
         return {
             ...userWithoutPassword,
             _id: result.insertedId
         };
     },
 
-    // ✅ FIXED: Robust updateProfile using updateOne + findOne
     updateProfile: async (id, updateData) => {
-        const collection = User.getCollection();
+        const collection = await User.getCollection();
         const { _id, password, ...data } = updateData;
 
         // Remove undefined fields
@@ -85,10 +85,8 @@ const User = {
             }
         }
 
-        // Always update updatedAt
         cleanData.updatedAt = new Date();
 
-        // If password provided, hash it
         if (password) {
             const salt = await bcrypt.genSalt(10);
             cleanData.password = await bcrypt.hash(password, salt);
@@ -101,14 +99,12 @@ const User = {
             );
 
             if (updateResult.matchedCount === 0) {
-                return null; // User not found
+                return null;
             }
 
-            // Fetch updated user
             const updatedUser = await collection.findOne({ _id: new ObjectId(id) });
             if (!updatedUser) return null;
 
-            // Remove password
             const { password: _, ...userWithoutPassword } = updatedUser;
             return userWithoutPassword;
         } catch (error) {
@@ -118,7 +114,7 @@ const User = {
     },
 
     updateLastLogin: async (id) => {
-        const collection = User.getCollection();
+        const collection = await User.getCollection();
         try {
             await collection.updateOne(
                 { _id: new ObjectId(id) },
@@ -139,7 +135,7 @@ const User = {
     },
 
     delete: async (id) => {
-        const collection = User.getCollection();
+        const collection = await User.getCollection();
         try {
             const result = await collection.deleteOne({ _id: new ObjectId(id) });
             return result.deletedCount > 0;
@@ -150,10 +146,16 @@ const User = {
     },
 
     findAll: async (filter = {}, options = {}) => {
-        const collection = User.getCollection();
+        const collection = await User.getCollection();
         const { limit = 10, skip = 0, sort = { createdAt: -1 } } = options;
         try {
-            const users = await collection.find(filter).sort(sort).skip(skip).limit(limit).toArray();
+            const users = await collection
+                .find(filter)
+                .sort(sort)
+                .skip(skip)
+                .limit(limit)
+                .toArray();
+
             return users.map(({ password, ...user }) => user);
         } catch (error) {
             console.error('Error finding users:', error);
@@ -162,7 +164,7 @@ const User = {
     },
 
     count: async (filter = {}) => {
-        const collection = User.getCollection();
+        const collection = await User.getCollection();
         try {
             return await collection.countDocuments(filter);
         } catch (error) {
@@ -172,13 +174,14 @@ const User = {
     },
 
     updateActiveStatus: async (id, isActive) => {
-        const collection = User.getCollection();
+        const collection = await User.getCollection();
         try {
             const result = await collection.findOneAndUpdate(
                 { _id: new ObjectId(id) },
                 { $set: { isActive, updatedAt: new Date() } },
                 { returnDocument: 'after' }
             );
+
             if (result.value) {
                 const { password: _, ...userWithoutPassword } = result.value;
                 return userWithoutPassword;
@@ -191,7 +194,7 @@ const User = {
     },
 
     bulkUpdateRole: async (userIds, role) => {
-        const collection = User.getCollection();
+        const collection = await User.getCollection();
         try {
             const objectIds = userIds.map(id => new ObjectId(id));
             return await collection.updateMany(
@@ -205,7 +208,7 @@ const User = {
     },
 
     getStats: async () => {
-        const collection = User.getCollection();
+        const collection = await User.getCollection();
         try {
             const [total, active, jobSeekers, admins, recent] = await Promise.all([
                 collection.countDocuments(),
@@ -214,6 +217,7 @@ const User = {
                 collection.countDocuments({ role: 'admin' }),
                 collection.find({}).sort({ createdAt: -1 }).limit(5).toArray()
             ]);
+
             return {
                 total,
                 active,

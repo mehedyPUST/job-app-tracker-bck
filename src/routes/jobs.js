@@ -8,9 +8,14 @@ const {
     isValidStatus,
     canTransition,
     statusUpdateFields,
+    historyUpdateFields,
     buildStats,
     hasApplied,
     computeStatuses,
+    computeStatusHistory,
+    addStatusToHistory,
+    removeStatusFromHistory,
+    normalizeStatusHistory,
 } = require('../utils/statusLogic');
 
 // ============================================
@@ -264,6 +269,7 @@ router.post('/', protect, async (req, res) => {
 
         const everApplied = desiredStatus !== 'no_action';
         const now = new Date();
+        const statusHistory = computeStatusHistory(desiredStatus, { status: 'no_action', everApplied: false });
         const statuses = computeStatuses(desiredStatus, { status: 'no_action', everApplied: false });
 
         const newJob = {
@@ -279,6 +285,7 @@ router.post('/', protect, async (req, res) => {
             notes: notes || '',
             status: desiredStatus,
             statuses,
+            statusHistory,
             everApplied,
             appliedDate: everApplied ? now : null,
             createdAt: now,
@@ -421,7 +428,7 @@ router.patch('/:id/status', protect, async (req, res) => {
         const db = getDB();
         const jobId = req.params.id;
         const userId = req.user._id.toString();
-        const { status } = req.body;
+        const { status, date } = req.body;
 
         if (!ObjectId.isValid(jobId)) {
             return res.status(400).json({
@@ -470,7 +477,7 @@ router.patch('/:id/status', protect, async (req, res) => {
             });
         }
 
-        const fields = statusUpdateFields(status, existingJob);
+        const fields = statusUpdateFields(status, existingJob, date || null);
 
         // Never unset everApplied once true
         if (existingJob.everApplied || hasApplied(existingJob)) {
@@ -498,6 +505,104 @@ router.patch('/:id/status', protect, async (req, res) => {
             success: false,
             message: 'Server error: ' + error.message
         });
+    }
+});
+
+// ============================================
+// ADD / UPDATE SINGLE STATUS (with date)
+// ============================================
+router.post('/:id/status-history', protect, async (req, res) => {
+    try {
+        const db = getDB();
+        const jobId = req.params.id;
+        const userId = req.user._id.toString();
+        const { status, date } = req.body;
+
+        if (!ObjectId.isValid(jobId)) {
+            return res.status(400).json({ success: false, message: 'Invalid job ID' });
+        }
+        if (!status || !isValidStatus(status) || status === 'no_action') {
+            return res.status(400).json({ success: false, message: 'Valid status is required' });
+        }
+
+        const existingJob = await db.collection('jobs').findOne({
+            _id: new ObjectId(jobId),
+            userId
+        });
+        if (!existingJob) {
+            return res.status(404).json({ success: false, message: 'Job not found' });
+        }
+
+        // Must have applied before adding later/terminal statuses
+        if (!hasApplied(existingJob) && status !== 'applied') {
+            return res.status(400).json({
+                success: false,
+                message: 'You must mark the job as Applied before adding this status.',
+            });
+        }
+
+        const history = addStatusToHistory(existingJob, status, date || null);
+        const fields = historyUpdateFields(history, existingJob);
+
+        const result = await db.collection('jobs').findOneAndUpdate(
+            { _id: new ObjectId(jobId), userId },
+            { $set: fields },
+            { returnDocument: 'after' }
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: 'Status added successfully',
+            job: result.value
+        });
+    } catch (error) {
+        console.error('❌ Error adding status:', error);
+        return res.status(500).json({ success: false, message: 'Server error: ' + error.message });
+    }
+});
+
+// ============================================
+// REMOVE SINGLE STATUS FROM HISTORY
+// ============================================
+router.delete('/:id/status-history/:status', protect, async (req, res) => {
+    try {
+        const db = getDB();
+        const jobId = req.params.id;
+        const statusToRemove = req.params.status;
+        const userId = req.user._id.toString();
+
+        if (!ObjectId.isValid(jobId)) {
+            return res.status(400).json({ success: false, message: 'Invalid job ID' });
+        }
+        if (!statusToRemove || !isValidStatus(statusToRemove)) {
+            return res.status(400).json({ success: false, message: 'Valid status is required' });
+        }
+
+        const existingJob = await db.collection('jobs').findOne({
+            _id: new ObjectId(jobId),
+            userId
+        });
+        if (!existingJob) {
+            return res.status(404).json({ success: false, message: 'Job not found' });
+        }
+
+        const history = removeStatusFromHistory(existingJob, statusToRemove);
+        const fields = historyUpdateFields(history, existingJob);
+
+        const result = await db.collection('jobs').findOneAndUpdate(
+            { _id: new ObjectId(jobId), userId },
+            { $set: fields },
+            { returnDocument: 'after' }
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: 'Status removed successfully',
+            job: result.value
+        });
+    } catch (error) {
+        console.error('❌ Error removing status:', error);
+        return res.status(500).json({ success: false, message: 'Server error: ' + error.message });
     }
 });
 

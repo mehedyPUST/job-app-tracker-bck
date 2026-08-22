@@ -4,7 +4,7 @@ const { MongoClient } = require('mongodb');
 let client = null;
 let db = null;
 let isInitialized = false;
-let connectingPromise = null;   // ← important for race condition
+let connectingPromise = null;
 
 const connectDB = async () => {
     // Already connected
@@ -26,11 +26,13 @@ const connectDB = async () => {
                 throw new Error('MONGODB_URI and DB_NAME must be defined in environment variables');
             }
 
+            // Optimized for serverless environments
             client = new MongoClient(uri, {
-                maxPoolSize: 10,
+                maxPoolSize: 5,        // Reduced for serverless
                 minPoolSize: 0,
-                serverSelectionTimeoutMS: 8000,
-                socketTimeoutMS: 45000,
+                serverSelectionTimeoutMS: 5000,
+                socketTimeoutMS: 30000,
+                connectTimeoutMS: 10000,
             });
 
             await client.connect();
@@ -114,7 +116,6 @@ const getDB = () => {
     return db;
 };
 
-// Safe version that automatically connects if needed
 const getDBSafe = async () => {
     if (!db) {
         await connectDB();
@@ -142,7 +143,7 @@ const closeDB = async () => {
 module.exports = {
     connectDB,
     getDB,
-    getDBSafe,          // ← use this in routes
+    getDBSafe,
     getClient,
     closeDB,
     isInitialized: () => isInitialized

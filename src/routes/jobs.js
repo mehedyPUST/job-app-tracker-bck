@@ -38,8 +38,7 @@ router.get('/', protect, async (req, res) => {
 });
 
 // ============================================
-// GET STATS  (MUST be before /:id)
-// Applied count = ever applied (does not decrease when status advances)
+// GET STATS (MUST be before /:id)
 // ============================================
 router.get('/stats/summary', protect, async (req, res) => {
     try {
@@ -112,7 +111,6 @@ router.delete('/bulk', protect, async (req, res) => {
 
 // ============================================
 // BULK STATUS UPDATE (MUST be before /:id)
-// Only updates jobs that are allowed to transition
 // ============================================
 router.patch('/bulk/status', protect, async (req, res) => {
     try {
@@ -228,7 +226,6 @@ router.get('/:id', protect, async (req, res) => {
 
 // ============================================
 // CREATE JOB
-// Cannot create directly at Resume Viewed+ without Applied
 // ============================================
 router.post('/', protect, async (req, res) => {
     try {

@@ -1,14 +1,6 @@
-/**
- * Job application status progression logic (frontend)
- *
- * Pipeline: no_action → applied → resume_viewed → shortlisted → online_test → interview → got_hired
- * Terminal (only after Applied): rejected, no_response
- *
- * - Cannot reach Resume Viewed (or later) without Applied first
- * - Applied count is cumulative (ever applied) and does not decrease when status advances
- */
+// backend/src/utils/statusLogic.js
 
-export const VALID_STATUSES = [
+const VALID_STATUSES = [
     'no_action',
     'applied',
     'resume_viewed',
@@ -20,7 +12,7 @@ export const VALID_STATUSES = [
     'no_response',
 ];
 
-export const STATUS_LABELS = {
+const STATUS_LABELS = {
     no_action: 'No Action Yet',
     applied: 'Applied',
     resume_viewed: 'Resume Viewed',
@@ -32,7 +24,7 @@ export const STATUS_LABELS = {
     no_response: 'No Response',
 };
 
-export const STATUS_OPTIONS = VALID_STATUSES.map((value) => ({
+const STATUS_OPTIONS = VALID_STATUSES.map((value) => ({
     value,
     label: STATUS_LABELS[value],
 }));
@@ -51,18 +43,19 @@ const PIPELINE_RANK = {
 
 const TERMINAL = ['rejected', 'no_response'];
 
-export function hasApplied(job) {
+function hasApplied(job) {
     if (!job) return false;
     if (job.everApplied === true) return true;
     const s = job.status || 'no_action';
     return s !== 'no_action';
 }
 
-/**
- * @returns {{ ok: boolean, message?: string }}
- */
-export function canTransition(currentStatus, newStatus, job = null) {
-    if (!VALID_STATUSES.includes(newStatus)) {
+function isValidStatus(status) {
+    return VALID_STATUSES.includes(status);
+}
+
+function canTransition(currentStatus, newStatus, job = null) {
+    if (!isValidStatus(newStatus)) {
         return { ok: false, message: 'Invalid status value' };
     }
 
@@ -77,8 +70,7 @@ export function canTransition(currentStatus, newStatus, job = null) {
         }
         return {
             ok: false,
-            message:
-                'You must mark the job as Applied before moving to Resume Viewed or any later stage.',
+            message: 'You must mark the job as Applied before moving to Resume Viewed or any later stage.',
         };
     }
 
@@ -100,8 +92,30 @@ export function canTransition(currentStatus, newStatus, job = null) {
     return { ok: true };
 }
 
-/** Status values the user is allowed to pick for this job */
-export function getAllowedStatuses(job) {
+function statusUpdateFields(newStatus, job) {
+    const now = new Date();
+    const fields = {
+        status: newStatus,
+        updatedAt: now,
+    };
+
+    const currentStatus = job?.status || 'no_action';
+    
+    // If moving from no_action to applied, set appliedDate and everApplied
+    if (currentStatus === 'no_action' && newStatus === 'applied') {
+        fields.appliedDate = now;
+        fields.everApplied = true;
+    }
+
+    // If job has everApplied true, keep it
+    if (job?.everApplied || hasApplied(job)) {
+        fields.everApplied = true;
+    }
+
+    return fields;
+}
+
+function getAllowedStatuses(job) {
     const current = job?.status || 'no_action';
     const applied = hasApplied(job);
 
@@ -112,17 +126,12 @@ export function getAllowedStatuses(job) {
     return [...VALID_STATUSES];
 }
 
-export function getAllowedStatusOptions(job) {
+function getAllowedStatusOptions(job) {
     const allowed = getAllowedStatuses(job);
     return STATUS_OPTIONS.filter((o) => allowed.includes(o.value));
 }
 
-/**
- * Build display stats from a jobs array.
- * applied = ever applied (does not decrease when status moves past applied)
- * other keys = exact current status counts
- */
-export function buildClientStats(jobs = []) {
+function buildStats(jobs = []) {
     const statuses = {};
     VALID_STATUSES.forEach((s) => {
         statuses[s] = 0;
@@ -144,3 +153,18 @@ export function buildClientStats(jobs = []) {
 
     return { total, ...statuses };
 }
+
+module.exports = {
+    VALID_STATUSES,
+    STATUS_LABELS,
+    STATUS_OPTIONS,
+    PIPELINE_RANK,
+    TERMINAL,
+    hasApplied,
+    isValidStatus,
+    canTransition,
+    statusUpdateFields,
+    getAllowedStatuses,
+    getAllowedStatusOptions,
+    buildStats,
+};

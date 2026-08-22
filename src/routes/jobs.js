@@ -4,6 +4,13 @@ const router = express.Router();
 const { ObjectId } = require('mongodb');
 const { getDB } = require('../config/db');
 const { protect } = require('../middleware/auth');
+const {
+    isValidStatus,
+    canTransition,
+    statusUpdateFields,
+    buildStats,
+    hasApplied,
+} = require('../utils/statusLogic');
 
 // ============================================
 // GET ALL JOBS
@@ -32,33 +39,18 @@ router.get('/', protect, async (req, res) => {
 
 // ============================================
 // GET STATS  (MUST be before /:id)
+// Applied count = ever applied (does not decrease when status advances)
 // ============================================
 router.get('/stats/summary', protect, async (req, res) => {
     try {
         const db = getDB();
         const userId = req.user._id.toString();
 
-        const pipeline = [
-            { $match: { userId } },
-            {
-                $group: {
-                    _id: '$status',
-                    count: { $sum: 1 }
-                }
-            }
-        ];
+        const jobs = await db.collection('jobs')
+            .find({ userId })
+            .toArray();
 
-        const stats = await db.collection('jobs').aggregate(pipeline).toArray();
-        const total = stats.reduce((acc, curr) => acc + curr.count, 0);
-
-        const result = {
-            total,
-            statuses: {}
-        };
-
-        stats.forEach(stat => {
-            result.statuses[stat._id] = stat.count;
-        });
+        const result = buildStats(jobs);
 
         res.json({
             success: true,
@@ -120,11 +112,13 @@ router.delete('/bulk', protect, async (req, res) => {
 
 // ============================================
 // BULK STATUS UPDATE (MUST be before /:id)
+// Only updates jobs that are allowed to transition
 // ============================================
 router.patch('/bulk/status', protect, async (req, res) => {
     try {
         const db = getDB();
         const { jobIds, status } = req.body;
+        const userId = req.user._id.toString();
 
         if (!jobIds || !Array.isArray(jobIds) || jobIds.length === 0) {
             return res.status(400).json({
@@ -140,13 +134,7 @@ router.patch('/bulk/status', protect, async (req, res) => {
             });
         }
 
-        const validStatuses = [
-            'applied', 'resume_viewed', 'shortlisted',
-            'online_test', 'interview', 'got_hired',
-            'rejected', 'no_response', 'no_action'
-        ];
-
-        if (!validStatuses.includes(status)) {
+        if (!isValidStatus(status)) {
             return res.status(400).json({
                 success: false,
                 message: 'Invalid status value'
@@ -164,20 +152,34 @@ router.patch('/bulk/status', protect, async (req, res) => {
             });
         }
 
-        const result = await db.collection('jobs').updateMany(
-            {
-                _id: { $in: objectIds },
-                userId: req.user._id.toString()
-            },
-            {
-                $set: { status, updatedAt: new Date() }
+        const jobs = await db.collection('jobs')
+            .find({ _id: { $in: objectIds }, userId })
+            .toArray();
+
+        let modifiedCount = 0;
+        const skipped = [];
+
+        for (const job of jobs) {
+            const check = canTransition(job.status, status, job);
+            if (!check.ok) {
+                skipped.push({ id: job._id, reason: check.message });
+                continue;
             }
-        );
+
+            const fields = statusUpdateFields(status, job);
+            await db.collection('jobs').updateOne(
+                { _id: job._id, userId },
+                { $set: fields }
+            );
+            modifiedCount += 1;
+        }
 
         res.json({
             success: true,
-            message: `${result.modifiedCount} jobs updated successfully`,
-            modifiedCount: result.modifiedCount
+            message: `${modifiedCount} jobs updated successfully`,
+            modifiedCount,
+            skippedCount: skipped.length,
+            skipped
         });
     } catch (error) {
         console.error('❌ Error bulk updating status:', error);
@@ -226,6 +228,7 @@ router.get('/:id', protect, async (req, res) => {
 
 // ============================================
 // CREATE JOB
+// Cannot create directly at Resume Viewed+ without Applied
 // ============================================
 router.post('/', protect, async (req, res) => {
     try {
@@ -243,6 +246,27 @@ router.post('/', protect, async (req, res) => {
             status
         } = req.body;
 
+        const desiredStatus = status || 'no_action';
+
+        if (!isValidStatus(desiredStatus)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid status value'
+            });
+        }
+
+        // Creating a job: treat as transitioning from no_action
+        const check = canTransition('no_action', desiredStatus, { status: 'no_action', everApplied: false });
+        if (!check.ok) {
+            return res.status(400).json({
+                success: false,
+                message: check.message
+            });
+        }
+
+        const everApplied = desiredStatus !== 'no_action';
+        const now = new Date();
+
         const newJob = {
             userId: req.user._id.toString(),
             title: title?.trim() || '',
@@ -254,10 +278,11 @@ router.post('/', protect, async (req, res) => {
             jobLink: jobLink || '',
             jobDescription: jobDescription || '',
             notes: notes || '',
-            status: status || 'no_action',
-            appliedDate: new Date(),
-            createdAt: new Date(),
-            updatedAt: new Date()
+            status: desiredStatus,
+            everApplied,
+            appliedDate: everApplied ? now : null,
+            createdAt: now,
+            updatedAt: now
         };
 
         const result = await db.collection('jobs').insertOne(newJob);
@@ -285,11 +310,24 @@ router.post('/', protect, async (req, res) => {
 router.put('/:id', protect, async (req, res) => {
     try {
         const db = getDB();
+        const userId = req.user._id.toString();
 
         if (!ObjectId.isValid(req.params.id)) {
             return res.status(400).json({
                 success: false,
                 message: 'Invalid job ID'
+            });
+        }
+
+        const existingJob = await db.collection('jobs').findOne({
+            _id: new ObjectId(req.params.id),
+            userId
+        });
+
+        if (!existingJob) {
+            return res.status(404).json({
+                success: false,
+                message: 'Job not found'
             });
         }
 
@@ -306,6 +344,27 @@ router.put('/:id', protect, async (req, res) => {
             status
         } = req.body;
 
+        const desiredStatus = status || existingJob.status || 'no_action';
+
+        if (!isValidStatus(desiredStatus)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid status value'
+            });
+        }
+
+        if (desiredStatus !== existingJob.status) {
+            const check = canTransition(existingJob.status, desiredStatus, existingJob);
+            if (!check.ok) {
+                return res.status(400).json({
+                    success: false,
+                    message: check.message
+                });
+            }
+        }
+
+        const statusFields = statusUpdateFields(desiredStatus, existingJob);
+
         const updateData = {
             title: title?.trim() || '',
             company: company?.trim() || '',
@@ -316,14 +375,18 @@ router.put('/:id', protect, async (req, res) => {
             jobLink: jobLink || '',
             jobDescription: jobDescription || '',
             notes: notes || '',
-            status: status || 'no_action',
-            updatedAt: new Date()
+            ...statusFields,
         };
+
+        // Preserve everApplied once true
+        if (existingJob.everApplied || hasApplied(existingJob)) {
+            updateData.everApplied = true;
+        }
 
         const result = await db.collection('jobs').findOneAndUpdate(
             {
                 _id: new ObjectId(req.params.id),
-                userId: req.user._id.toString()
+                userId
             },
             { $set: updateData },
             { returnDocument: 'after' }
@@ -374,13 +437,7 @@ router.patch('/:id/status', protect, async (req, res) => {
             });
         }
 
-        const validStatuses = [
-            'applied', 'resume_viewed', 'shortlisted',
-            'online_test', 'interview', 'got_hired',
-            'rejected', 'no_response', 'no_action'
-        ];
-
-        if (!validStatuses.includes(status)) {
+        if (!isValidStatus(status)) {
             return res.status(400).json({
                 success: false,
                 message: 'Invalid status value'
@@ -405,17 +462,27 @@ router.patch('/:id/status', protect, async (req, res) => {
             });
         }
 
+        const check = canTransition(existingJob.status, status, existingJob);
+        if (!check.ok) {
+            return res.status(400).json({
+                success: false,
+                message: check.message
+            });
+        }
+
+        const fields = statusUpdateFields(status, existingJob);
+
+        // Never unset everApplied once true
+        if (existingJob.everApplied || hasApplied(existingJob)) {
+            fields.everApplied = true;
+        }
+
         const result = await db.collection('jobs').findOneAndUpdate(
             {
                 _id: new ObjectId(jobId),
                 userId: userId
             },
-            {
-                $set: {
-                    status,
-                    updatedAt: new Date()
-                }
-            },
+            { $set: fields },
             { returnDocument: 'after' }
         );
 

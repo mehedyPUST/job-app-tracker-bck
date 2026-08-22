@@ -246,7 +246,13 @@ router.post('/', protect, async (req, res) => {
             jobLink,
             jobDescription,
             notes,
-            status
+            status,
+            statusDate,
+            contactName,
+            contactEmail,
+            contactPhone,
+            source,
+            priority
         } = req.body;
 
         const desiredStatus = status || 'no_action';
@@ -269,7 +275,11 @@ router.post('/', protect, async (req, res) => {
 
         const everApplied = desiredStatus !== 'no_action';
         const now = new Date();
-        const statusHistory = computeStatusHistory(desiredStatus, { status: 'no_action', everApplied: false });
+        const statusHistory = computeStatusHistory(
+            desiredStatus,
+            { status: 'no_action', everApplied: false },
+            statusDate || null
+        );
         const statuses = computeStatuses(desiredStatus, { status: 'no_action', everApplied: false });
 
         const newJob = {
@@ -283,6 +293,11 @@ router.post('/', protect, async (req, res) => {
             jobLink: jobLink || '',
             jobDescription: jobDescription || '',
             notes: notes || '',
+            contactName: contactName?.trim() || '',
+            contactEmail: contactEmail?.trim() || '',
+            contactPhone: contactPhone?.trim() || '',
+            source: source?.trim() || '',
+            priority: priority || 'medium',
             status: desiredStatus,
             statuses,
             statusHistory,
@@ -348,7 +363,12 @@ router.put('/:id', protect, async (req, res) => {
             jobLink,
             jobDescription,
             notes,
-            status
+            status,
+            contactName,
+            contactEmail,
+            contactPhone,
+            source,
+            priority
         } = req.body;
 
         const desiredStatus = status || existingJob.status || 'no_action';
@@ -382,6 +402,11 @@ router.put('/:id', protect, async (req, res) => {
             jobLink: jobLink || '',
             jobDescription: jobDescription || '',
             notes: notes || '',
+            contactName: contactName !== undefined ? (contactName?.trim() || '') : (existingJob.contactName || ''),
+            contactEmail: contactEmail !== undefined ? (contactEmail?.trim() || '') : (existingJob.contactEmail || ''),
+            contactPhone: contactPhone !== undefined ? (contactPhone?.trim() || '') : (existingJob.contactPhone || ''),
+            source: source !== undefined ? (source?.trim() || '') : (existingJob.source || ''),
+            priority: priority || existingJob.priority || 'medium',
             ...statusFields,
         };
 
@@ -557,6 +582,53 @@ router.post('/:id/status-history', protect, async (req, res) => {
         });
     } catch (error) {
         console.error('❌ Error adding status:', error);
+        return res.status(500).json({ success: false, message: 'Server error: ' + error.message });
+    }
+});
+
+// ============================================
+// UPDATE DATE OF A STATUS IN HISTORY
+// ============================================
+router.patch('/:id/status-history/:status', protect, async (req, res) => {
+    try {
+        const db = getDB();
+        const jobId = req.params.id;
+        const statusKey = req.params.status;
+        const userId = req.user._id.toString();
+        const { date } = req.body;
+
+        if (!ObjectId.isValid(jobId)) {
+            return res.status(400).json({ success: false, message: 'Invalid job ID' });
+        }
+        if (!statusKey || !isValidStatus(statusKey) || statusKey === 'no_action') {
+            return res.status(400).json({ success: false, message: 'Valid status is required' });
+        }
+
+        const existingJob = await db.collection('jobs').findOne({
+            _id: new ObjectId(jobId),
+            userId
+        });
+        if (!existingJob) {
+            return res.status(404).json({ success: false, message: 'Job not found' });
+        }
+
+        // Re-add with new date (addStatusToHistory replaces existing entry)
+        const history = addStatusToHistory(existingJob, statusKey, date || null);
+        const fields = historyUpdateFields(history, existingJob);
+
+        const result = await db.collection('jobs').findOneAndUpdate(
+            { _id: new ObjectId(jobId), userId },
+            { $set: fields },
+            { returnDocument: 'after' }
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: 'Status date updated successfully',
+            job: result.value
+        });
+    } catch (error) {
+        console.error('❌ Error updating status date:', error);
         return res.status(500).json({ success: false, message: 'Server error: ' + error.message });
     }
 });

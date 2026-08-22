@@ -10,6 +10,7 @@ const {
     statusUpdateFields,
     buildStats,
     hasApplied,
+    computeStatuses,
 } = require('../utils/statusLogic');
 
 // ============================================
@@ -263,6 +264,7 @@ router.post('/', protect, async (req, res) => {
 
         const everApplied = desiredStatus !== 'no_action';
         const now = new Date();
+        const statuses = computeStatuses(desiredStatus, { status: 'no_action', everApplied: false });
 
         const newJob = {
             userId: req.user._id.toString(),
@@ -276,6 +278,7 @@ router.post('/', protect, async (req, res) => {
             jobDescription: jobDescription || '',
             notes: notes || '',
             status: desiredStatus,
+            statuses,
             everApplied,
             appliedDate: everApplied ? now : null,
             createdAt: now,

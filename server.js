@@ -10,6 +10,7 @@ const authRoutes = require('./src/routes/auth');
 const jobsRoutes = require('./src/routes/jobs');
 const userRoutes = require('./src/routes/users');
 const interviewQARoutes = require('./src/routes/interviewQA');
+const publicJobsRoutes = require('./src/routes/publicJobs');
 
 const app = express();
 
@@ -52,6 +53,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/jobs', jobsRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/interview-qa', interviewQARoutes);
+app.use('/api/public-jobs', publicJobsRoutes);
 
 // Test route
 app.get('/api/auth/test', (req, res) => {
@@ -82,6 +84,9 @@ app.get('/', (req, res) => {
             'GET  /api/interview-qa',
             'POST /api/interview-qa',
             'DELETE /api/interview-qa/:id',
+            'GET  /api/public-jobs',
+            'POST /api/public-jobs',
+            'POST /api/public-jobs/:id/track',
         ],
     });
 });

@@ -143,17 +143,27 @@ router.get('/', protect, admin, async (req, res) => {
                 ]
             };
         }
-        const users = await User.findAll(filter, { limit: parseInt(limit), skip: parseInt(skip), sort: { createdAt: -1 } });
+        const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
+        const skipNum = Math.max(0, parseInt(skip, 10) || 0);
+        const users = await User.findAll(filter, {
+            limit: limitNum,
+            skip: skipNum,
+            sort: { createdAt: -1 },
+        });
         const total = await User.count(filter);
+        const normalized = (users || []).map((u) => ({
+            ...u,
+            _id: u._id != null ? String(u._id) : u._id,
+        }));
         res.json({
             success: true,
-            users,
+            users: normalized,
             pagination: {
                 total,
-                limit: parseInt(limit),
-                skip: parseInt(skip),
-                pages: Math.ceil(total / parseInt(limit))
-            }
+                limit: limitNum,
+                skip: skipNum,
+                pages: Math.ceil(total / limitNum) || 1,
+            },
         });
     } catch (error) {
         console.error('Error fetching users:', error);
@@ -180,29 +190,36 @@ router.patch('/:id/role', protect, admin, async (req, res) => {
         if (!['jobSeeker', 'admin'].includes(role)) {
             return res.status(400).json({ success: false, message: 'Invalid role' });
         }
-        const existingUser = await User.findById(req.params.id);
+        const targetId = String(req.params.id);
+        const selfId = String(req.user._id);
+        if (targetId === selfId) {
+            return res.status(400).json({ success: false, message: 'You cannot change your own role' });
+        }
+        const existingUser = await User.findById(targetId);
         if (!existingUser) return res.status(404).json({ success: false, message: 'User not found' });
-        const updatedUser = await User.updateProfile(req.params.id, { role });
+        const updatedUser = await User.updateProfile(targetId, { role });
         if (!updatedUser) return res.status(500).json({ success: false, message: 'Failed to update role' });
         res.json({ success: true, message: 'User role updated successfully', user: updatedUser });
     } catch (error) {
         console.error('Error updating user role:', error);
-        res.status(500).json({ success: false, message: 'Failed to update user role' });
+        res.status(500).json({ success: false, message: error.message || 'Failed to update user role' });
     }
 });
 
 // DELETE USER (ADMIN)
 router.delete('/:id', protect, admin, async (req, res) => {
     try {
-        if (req.params.id === req.user._id.toString()) {
+        const targetId = String(req.params.id);
+        const selfId = String(req.user._id);
+        if (targetId === selfId) {
             return res.status(400).json({ success: false, message: 'You cannot delete your own account' });
         }
-        const deleted = await User.delete(req.params.id);
+        const deleted = await User.delete(targetId);
         if (!deleted) return res.status(404).json({ success: false, message: 'User not found' });
         res.json({ success: true, message: 'User deleted successfully' });
     } catch (error) {
         console.error('Error deleting user:', error);
-        res.status(500).json({ success: false, message: 'Failed to delete user' });
+        res.status(500).json({ success: false, message: error.message || 'Failed to delete user' });
     }
 });
 

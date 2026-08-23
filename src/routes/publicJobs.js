@@ -77,6 +77,7 @@ router.get('/', async (req, res) => {
             success: true,
             items: items.map((i) => ({
                 ...i,
+                comments: Array.isArray(i.comments) ? i.comments : [],
                 alreadyTracked: trackedIds.has(i._id.toString()),
             })),
             total,
@@ -174,6 +175,7 @@ router.post('/', protect, async (req, res) => {
             source: source?.trim() || 'Community Board',
             postedBy: req.user._id.toString(),
             postedByName: req.user.name || 'Anonymous',
+            comments: [],
             createdAt: now,
             updatedAt: now,
         };
@@ -396,5 +398,113 @@ router.post('/:id/track', protect, async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to add to tracking list' });
     }
 });
+
+
+// ============================================
+// ADD COMMENT (auth)
+// ============================================
+router.post('/:id/comments', protect, async (req, res) => {
+    try {
+        const db = getDB();
+        if (!ObjectId.isValid(req.params.id)) {
+            return res.status(400).json({ success: false, message: 'Invalid job ID' });
+        }
+        const text = String(req.body?.text || '').trim();
+        if (!text) {
+            return res.status(400).json({ success: false, message: 'Comment text is required' });
+        }
+        if (text.length > 2000) {
+            return res.status(400).json({ success: false, message: 'Comment too long (max 2000)' });
+        }
+
+        const comment = {
+            _id: new ObjectId(),
+            text,
+            authorId: req.user._id.toString(),
+            authorName: req.user.name || 'Anonymous',
+            createdAt: new Date(),
+        };
+
+        const result = await db.collection('public_jobs').findOneAndUpdate(
+            { _id: new ObjectId(req.params.id) },
+            {
+                $push: { comments: comment },
+                $set: { updatedAt: new Date() },
+            },
+            { returnDocument: 'after' }
+        );
+
+        const item = result?.value ?? result;
+        if (!item) {
+            return res.status(404).json({ success: false, message: 'Job post not found' });
+        }
+
+        res.status(201).json({
+            success: true,
+            message: 'Comment added',
+            comment,
+            item: {
+                ...item,
+                comments: Array.isArray(item.comments) ? item.comments : [],
+            },
+        });
+    } catch (error) {
+        console.error('Public job comment error:', error);
+        res.status(500).json({ success: false, message: 'Failed to add comment' });
+    }
+});
+
+// ============================================
+// DELETE COMMENT (author or admin)
+// ============================================
+router.delete('/:id/comments/:commentId', protect, async (req, res) => {
+    try {
+        const db = getDB();
+        if (!ObjectId.isValid(req.params.id) || !ObjectId.isValid(req.params.commentId)) {
+            return res.status(400).json({ success: false, message: 'Invalid ID' });
+        }
+
+        const job = await db.collection('public_jobs').findOne({
+            _id: new ObjectId(req.params.id),
+        });
+        if (!job) {
+            return res.status(404).json({ success: false, message: 'Job post not found' });
+        }
+
+        const comments = Array.isArray(job.comments) ? job.comments : [];
+        const target = comments.find((c) => String(c._id) === String(req.params.commentId));
+        if (!target) {
+            return res.status(404).json({ success: false, message: 'Comment not found' });
+        }
+
+        const isAuthor = target.authorId === req.user._id.toString();
+        const isAdmin = req.user.role === 'admin';
+        if (!isAuthor && !isAdmin) {
+            return res.status(403).json({ success: false, message: 'Not allowed to delete this comment' });
+        }
+
+        const result = await db.collection('public_jobs').findOneAndUpdate(
+            { _id: new ObjectId(req.params.id) },
+            {
+                $pull: { comments: { _id: new ObjectId(req.params.commentId) } },
+                $set: { updatedAt: new Date() },
+            },
+            { returnDocument: 'after' }
+        );
+
+        const item = result?.value ?? result;
+        res.json({
+            success: true,
+            message: 'Comment deleted',
+            item: item
+                ? { ...item, comments: Array.isArray(item.comments) ? item.comments : [] }
+                : null,
+        });
+    } catch (error) {
+        console.error('Public job delete comment error:', error);
+        res.status(500).json({ success: false, message: 'Failed to delete comment' });
+    }
+});
+
 
 module.exports = router;

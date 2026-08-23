@@ -9,6 +9,7 @@ const { connectDB } = require('./src/config/db');
 const authRoutes = require('./src/routes/auth');
 const jobsRoutes = require('./src/routes/jobs');
 const userRoutes = require('./src/routes/users');
+const interviewQARoutes = require('./src/routes/interviewQA');
 
 const app = express();
 
@@ -17,17 +18,15 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-// CORS – works for both localhost and Vercel
+// CORS – localhost + Vercel
 const allowedOrigins = [
     'http://localhost:3000',
-    process.env.CLIENT_URL,          // set this on Vercel to your frontend URL
+    process.env.CLIENT_URL,
 ].filter(Boolean);
 
 app.use(cors({
     origin: function (origin, callback) {
-        // allow requests with no origin (mobile apps, curl, etc.)
-        if (!origin) return callback(null, true);
-        if (allowedOrigins.includes(origin)) {
+        if (!origin || allowedOrigins.includes(origin)) {
             return callback(null, true);
         }
         return callback(new Error('Not allowed by CORS'));
@@ -52,6 +51,7 @@ connectDB()
 app.use('/api/auth', authRoutes);
 app.use('/api/jobs', jobsRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/interview-qa', interviewQARoutes);
 
 // Test route
 app.get('/api/auth/test', (req, res) => {
@@ -79,6 +79,9 @@ app.get('/', (req, res) => {
             'POST /api/auth/register',
             'GET  /api/jobs',
             'GET  /api/users/profile',
+            'GET  /api/interview-qa',
+            'POST /api/interview-qa',
+            'DELETE /api/interview-qa/:id',
         ],
     });
 });

@@ -138,45 +138,35 @@ function currentStatusFromHistory(history) {
  * Compute full statusHistory when user selects a new pipeline/terminal status.
  * Auto-adds previous pipeline stages. Existing dates are preserved.
  */
+/**
+ * Set / update a single status only (manual mode).
+ * Does NOT auto-add previous pipeline stages.
+ * Preserves all other existing statuses in history.
+ */
 function computeStatusHistory(newStatus, existingJob = null, date = null) {
-    const existing = normalizeStatusHistory(existingJob);
-    const nowIso = (date ? new Date(date) : new Date()).toISOString();
-
     if (newStatus === 'no_action') {
         return [];
     }
-
-    const rank = PIPELINE_RANK[newStatus];
-    const existingMap = {};
-    for (const h of existing) {
-        existingMap[h.status] = h;
+    if (!isValidStatus(newStatus)) {
+        return normalizeStatusHistory(existingJob);
     }
 
-    // Terminal: keep existing pipeline + add/update terminal
-    if (rank === -1) {
-        const pipeline = existing.filter((h) => PIPELINE_RANK[h.status] >= 1);
-        const base = pipeline.length > 0 ? pipeline : [{ status: 'applied', date: nowIso }];
-        const withoutThis = base.filter((h) => h.status !== newStatus);
-        return [...withoutThis, { status: newStatus, date: nowIso }];
-    }
+    const existing = normalizeStatusHistory(existingJob);
+    const nowIso = (date ? new Date(date) : new Date()).toISOString();
 
-    // Pipeline: all stages from applied (1) up to newStatus
-    const result = [];
-    for (const s of VALID_STATUSES) {
-        const r = PIPELINE_RANK[s];
-        if (r >= 1 && r <= rank) {
-            if (existingMap[s]) {
-                // keep existing date; if this is the new status, update date
-                result.push({
-                    status: s,
-                    date: s === newStatus ? nowIso : existingMap[s].date,
-                });
-            } else {
-                result.push({ status: s, date: nowIso });
-            }
-        }
-    }
-    return result;
+    // Keep every other status, replace/add only the selected one
+    const filtered = existing.filter((h) => h.status !== newStatus);
+    filtered.push({ status: newStatus, date: nowIso });
+
+    filtered.sort((a, b) => {
+        const ra = PIPELINE_RANK[a.status] === -1 ? 999 : PIPELINE_RANK[a.status];
+        const rb = PIPELINE_RANK[b.status] === -1 ? 999 : PIPELINE_RANK[b.status];
+        if (ra !== rb) return ra - rb;
+        const da = a.date ? new Date(a.date).getTime() : 0;
+        const db = b.date ? new Date(b.date).getTime() : 0;
+        return da - db;
+    });
+    return filtered;
 }
 
 /**
@@ -223,40 +213,10 @@ function isValidStatus(status) {
 }
 
 function canTransition(currentStatus, newStatus, job = null) {
+    // Fully manual: any valid status can be set at any time
     if (!isValidStatus(newStatus)) {
         return { ok: false, message: 'Invalid status value' };
     }
-
-    const current = currentStatus || 'no_action';
-    if (current === newStatus) return { ok: true };
-
-    const applied = hasApplied(job || { status: current });
-
-    if (!applied && current === 'no_action') {
-        if (newStatus === 'applied' || newStatus === 'no_action') {
-            return { ok: true };
-        }
-        return {
-            ok: false,
-            message: 'You must mark the job as Applied before moving to Resume Viewed or any later stage.',
-        };
-    }
-
-    if (TERMINAL.includes(newStatus) && !applied) {
-        return {
-            ok: false,
-            message: 'You must apply to a job before marking it as Rejected or No Response.',
-        };
-    }
-
-    const newRank = PIPELINE_RANK[newStatus];
-    if (newRank > 1 && !applied) {
-        return {
-            ok: false,
-            message: 'You must mark the job as Applied before moving to this stage.',
-        };
-    }
-
     return { ok: true };
 }
 
@@ -323,13 +283,7 @@ function historyUpdateFields(history, job) {
 }
 
 function getAllowedStatuses(job) {
-    const current = job?.status || 'no_action';
-    const applied = hasApplied(job);
-
-    if (!applied && current === 'no_action') {
-        return ['no_action', 'applied'];
-    }
-
+    // Fully manual: all statuses available
     return [...VALID_STATUSES];
 }
 
@@ -363,7 +317,8 @@ function buildStats(jobs = []) {
 
     statuses.applied = everAppliedCount;
 
-    return { total, ...statuses };
+    // Flat keys (backward compatible) + nested statuses object
+    return { total, statuses: { ...statuses }, ...statuses };
 }
 
 // Legacy helpers kept for compatibility

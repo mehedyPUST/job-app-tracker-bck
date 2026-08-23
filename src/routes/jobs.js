@@ -424,7 +424,8 @@ router.put('/:id', protect, async (req, res) => {
             { returnDocument: 'after' }
         );
 
-        if (!result.value) {
+        const updatedJob = result?.value ?? result;
+        if (!updatedJob) {
             return res.status(404).json({
                 success: false,
                 message: 'Job not found'
@@ -434,7 +435,7 @@ router.put('/:id', protect, async (req, res) => {
         res.json({
             success: true,
             message: 'Job updated successfully',
-            job: result.value
+            job: (result?.value ?? result)
         });
     } catch (error) {
         console.error('❌ Error updating job:', error);
@@ -521,7 +522,7 @@ router.patch('/:id/status', protect, async (req, res) => {
         return res.status(200).json({
             success: true,
             message: 'Status updated successfully',
-            job: result.value
+            job: (result?.value ?? result)
         });
 
     } catch (error) {
@@ -578,7 +579,7 @@ router.post('/:id/status-history', protect, async (req, res) => {
         return res.status(200).json({
             success: true,
             message: 'Status added successfully',
-            job: result.value
+            job: (result?.value ?? result)
         });
     } catch (error) {
         console.error('❌ Error adding status:', error);
@@ -625,7 +626,7 @@ router.patch('/:id/status-history/:status', protect, async (req, res) => {
         return res.status(200).json({
             success: true,
             message: 'Status date updated successfully',
-            job: result.value
+            job: (result?.value ?? result)
         });
     } catch (error) {
         console.error('❌ Error updating status date:', error);
@@ -670,7 +671,7 @@ router.delete('/:id/status-history/:status', protect, async (req, res) => {
         return res.status(200).json({
             success: true,
             message: 'Status removed successfully',
-            job: result.value
+            job: (result?.value ?? result)
         });
     } catch (error) {
         console.error('❌ Error removing status:', error);

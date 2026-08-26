@@ -35,14 +35,25 @@ const createCollections = async () => {
         await applicationsCollection.createIndex({ createdAt: -1 });
         console.log('✅ Applications collection ready');
 
-        // 4. Create collection with JSON Schema Validation (optional)
+        // 4. Community public job board
+        const publicJobsCollection = db.collection('public_jobs');
+        await publicJobsCollection.createIndex({ createdAt: -1 });
+        await publicJobsCollection.createIndex({ postedBy: 1 });
+        await publicJobsCollection.createIndex({ company: 1 });
+        await publicJobsCollection.createIndex({ location: 1 });
+        console.log('✅ Public jobs (community board) collection ready');
+
+        // Track-from-community lookup
+        await jobsCollection.createIndex({ userId: 1, publicJobId: 1 }, { sparse: true });
+
+        // 5. Schema validation aligned with statusLogic (includes no_action)
         try {
             await db.command({
                 collMod: 'jobs',
                 validator: {
                     $jsonSchema: {
                         bsonType: 'object',
-                        required: ['userId', 'title', 'company', 'location', 'salaryRange', 'skills', 'status'],
+                        required: ['userId', 'title', 'company', 'status'],
                         properties: {
                             userId: { bsonType: 'string' },
                             title: { bsonType: 'string' },
@@ -52,19 +63,30 @@ const createCollections = async () => {
                             skills: { bsonType: 'array' },
                             status: {
                                 bsonType: 'string',
-                                enum: ['applied', 'resume_viewed', 'shortlisted', 'online_test', 'interview', 'got_hired', 'rejected', 'no_response']
+                                enum: [
+                                    'no_action',
+                                    'applied',
+                                    'resume_viewed',
+                                    'shortlisted',
+                                    'online_test',
+                                    'interview',
+                                    'got_hired',
+                                    'rejected',
+                                    'no_response',
+                                ],
                             },
+                            publicJobId: { bsonType: ['string', 'null'] },
                             deadline: { bsonType: ['date', 'null'] },
                             jobLink: { bsonType: ['string', 'null'] },
                             notes: { bsonType: ['string', 'null'] },
-                            appliedDate: { bsonType: 'date' },
+                            appliedDate: { bsonType: ['date', 'null'] },
                             createdAt: { bsonType: 'date' },
-                            updatedAt: { bsonType: 'date' }
-                        }
-                    }
-                }
+                            updatedAt: { bsonType: 'date' },
+                        },
+                    },
+                },
             });
-            console.log('✅ Job schema validation added');
+            console.log('✅ Job schema validation updated (includes no_action)');
         } catch (error) {
             // Collection might not exist yet or validation already added
             console.log('ℹ️ Schema validation setup (may already exist):', error.message);

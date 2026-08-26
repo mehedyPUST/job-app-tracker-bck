@@ -72,7 +72,7 @@ const ensureCollections = async () => {
     try {
         const collections = await db.listCollections().toArray();
         const collectionNames = collections.map(c => c.name);
-        const requiredCollections = ['users', 'jobs', 'applications'];
+        const requiredCollections = ['users', 'jobs', 'applications', 'public_jobs'];
 
         for (const name of requiredCollections) {
             if (!collectionNames.includes(name)) {
@@ -99,11 +99,21 @@ const createIndexes = async () => {
         await jobs.createIndex({ appliedDate: -1 });
         await jobs.createIndex({ userId: 1, status: 1 });
         await jobs.createIndex({ userId: 1, createdAt: -1 });
+        // Community board → personal tracking (prevent duplicates)
+        await jobs.createIndex({ userId: 1, publicJobId: 1 }, { sparse: true });
 
         const applications = db.collection('applications');
         await applications.createIndex({ userId: 1 });
         await applications.createIndex({ jobId: 1 });
         await applications.createIndex({ createdAt: -1 });
+
+        // Community / public job board
+        const publicJobs = db.collection('public_jobs');
+        await publicJobs.createIndex({ createdAt: -1 });
+        await publicJobs.createIndex({ postedBy: 1 });
+        await publicJobs.createIndex({ company: 1 });
+        await publicJobs.createIndex({ location: 1 });
+        await publicJobs.createIndex({ title: 'text', company: 'text', jobDescription: 'text', skills: 'text' });
     } catch (error) {
         console.error('Error creating indexes:', error);
     }
